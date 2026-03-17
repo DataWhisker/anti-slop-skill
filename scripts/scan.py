@@ -196,16 +196,27 @@ def _check_python_stubs(filepath: str, content: str, is_test: bool) -> list[Find
             elif len(body) == 2:
                 if (isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
                         and isinstance(body[0].value.value, str) and isinstance(body[1], ast.Pass)):
-                    sev = Severity.MEDIUM if is_test else Severity.HIGH
-                    findings.append(Finding(
-                        file=filepath, line=node.lineno,
-                        category="stubs_placeholders",
-                        severity=SEVERITY_NAMES[sev],
-                        severity_points=int(sev),
-                        rule_id="docstring_pass_only",
-                        message=f"Function `{node.name}` has only a docstring and `pass`",
-                        suggested_fix="Implement the function body",
-                    ))
+                    # skip abstract methods (same logic as pass-only check above)
+                    is_abstract = any(
+                        isinstance(d, ast.Name) and "abstract" in d.id.lower()
+                        for d in node.decorator_list
+                        if isinstance(d, ast.Name)
+                    ) or any(
+                        isinstance(d, ast.Attribute) and "abstract" in d.attr.lower()
+                        for d in node.decorator_list
+                        if isinstance(d, ast.Attribute)
+                    )
+                    if not is_abstract:
+                        sev = Severity.MEDIUM if is_test else Severity.HIGH
+                        findings.append(Finding(
+                            file=filepath, line=node.lineno,
+                            category="stubs_placeholders",
+                            severity=SEVERITY_NAMES[sev],
+                            severity_points=int(sev),
+                            rule_id="docstring_pass_only",
+                            message=f"Function `{node.name}` has only a docstring and `pass`",
+                            suggested_fix="Implement the function body",
+                        ))
 
         # Bare except or overly broad except
         if isinstance(node, ast.ExceptHandler):
@@ -398,7 +409,7 @@ CROSS_LANG_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [
     ("js_const_let", re.compile(r"^\s*(?:const|let|var)\s+\w+\s*="), "JavaScript variable declaration in Python", "Python doesn't use const/let/var"),
     ("js_null", re.compile(r"\bnull\b(?!.*#)"), "JavaScript `null` in Python", "Use `None` instead"),
     ("js_undefined", re.compile(r"\bundefined\b(?!.*#)"), "JavaScript `undefined` in Python", "Python has no `undefined`; use `None`"),
-    ("js_triple_eq", re.compile(r"===|!=="), "JavaScript strict equality in Python", "Use `==` / `!=` or `is` / `is not`"),
+    ("js_triple_eq", re.compile(r"\w\s*===\s*\w|\w\s*!==\s*\w"), "JavaScript strict equality in Python", "Use `==` / `!=` or `is` / `is not`"),
     ("js_arrow_fn", re.compile(r"=>\s*\{"), "JavaScript arrow function syntax", "Use `lambda` or `def`"),
     # Java patterns in Python
     ("java_equals", re.compile(r"\.\bequals\s*\("), "Java `.equals()` used in Python", "Use `==` operator"),
@@ -537,7 +548,7 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern, str]] = [
 ]
 
 SECURITY_CODE_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [
-    ("sql_fstring", re.compile(r"""f['"].*(?:SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE)\b.*\{""", re.IGNORECASE), "SQL query built with f-string — SQL injection risk", "Use parameterized queries"),
+    ("sql_fstring", re.compile(r"""f['"][ ]*(?:SELECT\b|INSERT\s+INTO\b|UPDATE\s+\w+\s+SET\b|DELETE\s+FROM\b|DROP\s+(?:TABLE|DATABASE|INDEX|VIEW)\b|ALTER\s+TABLE\b|CREATE\s+(?:TABLE|INDEX|VIEW|DATABASE)\b).*\{""", re.IGNORECASE), "SQL query built with f-string — SQL injection risk", "Use parameterized queries"),
     ("sql_format", re.compile(r"""\.format\(.*(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b""", re.IGNORECASE), "SQL query built with .format() — SQL injection risk", "Use parameterized queries"),
     ("sql_concat", re.compile(r"""['"].*(?:SELECT|INSERT|UPDATE|DELETE)\b.*['"]\s*\+\s*""", re.IGNORECASE), "SQL string concatenation — SQL injection risk", "Use parameterized queries"),
     ("eval_call", re.compile(r"\beval\s*\("), "Use of `eval()` — code injection risk", "Avoid eval(); use ast.literal_eval() for data"),
